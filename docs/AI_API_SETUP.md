@@ -4,9 +4,39 @@
 
 本Python学习平台集成了AI助手功能，用户可以在任何页面右下角点击AI图标与AI助手对话，获得Python学习帮助。
 
+## 当前配置 (MiniMax)
+
+**当前使用的API配置：**
+```javascript
+const apiConfig = {
+    apiKey: 'NjZiZGFmYjA0MGQ5NjA3ODZlY2ZkYjBjNjk3NmI3NjlhNzMzYTgwNQ==',
+    apiUrl: 'http://1517457097276560.cn-wulanchabu.pai-eas.aliyuncs.com/api/predict/minimax_27_int8/v1',
+    model: 'minimax-2.7-INT8',
+    temperature: 0.7,
+    maxTokens: 2000
+};
+```
+
+---
+
 ## 支持的大模型服务商
 
-### 1. OpenAI (推荐)
+### 1. MiniMax (当前使用)
+
+**配置方法：**
+在 `static/js/main.js` 文件中找到 `callAIAPI` 函数，修改配置：
+
+```javascript
+const apiConfig = {
+    apiKey: 'your-api-key',
+    apiUrl: 'http://your-pai-eas-endpoint/api/predict/your-model/v1',
+    model: 'your-model-name',
+    temperature: 0.7,
+    maxTokens: 2000
+};
+```
+
+### 2. OpenAI (推荐)
 
 **申请步骤：**
 1. 访问 [OpenAI官网](https://platform.openai.com/)

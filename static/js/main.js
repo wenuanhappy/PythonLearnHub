@@ -853,25 +853,6 @@ function hideStatusIndicator() {
  */
 async function callAIAPI(message) {
     try {
-        const apiConfig = {
-            apiKey: 'sk-9b4b1fb4b60d4a69b258ebcb2b5a122b',
-            apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-            model: 'qwen-turbo',            // model: 'qwen-plus',
-            // model:'qwen3-coder-plus',
-            temperature: 0.7,
-            maxTokens: 2000
-        };
-
-        // 检查API配置
-        if (apiConfig.apiKey === 'YOUR_API_KEY' || apiConfig.apiUrl === 'YOUR_API_URL') {
-            // 显示配置提示
-            const configMessage = document.getElementById('apiConfigMessage');
-            if (configMessage) {
-                configMessage.style.display = 'block';
-            }
-            throw new Error('请先配置AI API密钥和地址');
-        }
-
         // 构建消息历史
         const messages = [
             {
@@ -890,19 +871,13 @@ async function callAIAPI(message) {
             content: message
         });
 
-        const response = await fetch(apiConfig.apiUrl, {
+        // 调用本地代理接口（解决CORS问题）
+        const response = await fetch('/api/ai/chat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiConfig.apiKey}`
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                model: apiConfig.model,
-                messages: messages,
-                temperature: apiConfig.temperature,
-                max_tokens: apiConfig.maxTokens,
-                stream: true // 启用流式输出
-            })
+            body: JSON.stringify({ messages: messages })
         });
 
         if (!response.ok) {
@@ -916,14 +891,22 @@ async function callAIAPI(message) {
         console.error('AI API调用错误:', error);
         hideStatusIndicator();
 
-        // 显示错误消息
-        const errorMessage = error.message.includes('API密钥')
-            ? '请先配置AI API密钥和地址。请查看页面底部的配置说明。'
-            : `AI服务暂时不可用: ${error.message}`;
+        // 显示更详细的错误信息
+        let errorMessage = error.message;
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            errorMessage = '无法连接到AI服务，请检查网络连接或稍后重试';
+        }
 
-        addMessage(errorMessage, 'ai');
+        addMessage(`❌ AI服务暂时不可用\n\n原因: ${errorMessage}`, 'ai');
 
         // 显示错误状态
+        const chatStatus = document.getElementById('chatStatus');
+        if (chatStatus) {
+            chatStatus.className = 'chat-status error';
+            chatStatus.textContent = '连接失败';
+        }
+    }
+}
         const chatStatus = document.getElementById('chatStatus');
         if (chatStatus) {
             chatStatus.className = 'chat-status error';
@@ -981,44 +964,70 @@ async function handleStreamingResponse(response, userMessage) {
             buffer = lines.pop(); // 保留不完整的行
 
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') {
-                        // 最后一次更新
-                        messageText.innerHTML = renderMarkdown(fullContent);
-                        if (typeof Prism !== 'undefined') {
-                            Prism.highlightAllUnder(messageText);
-                        }
-                        addCopyButtonsToCodeBlocks();
-                        aiMessage.classList.remove('streaming');
+                const trimmedLine = line.trim();
+                if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
 
-                        // 滚动到底部
-                        const chatMessages = document.getElementById('chatMessages');
-                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                const data = trimmedLine.slice(6);
+                if (data === '[DONE]') {
+                    // 最后一次更新
+                    messageText.innerHTML = renderMarkdown(fullContent);
+                    if (typeof Prism !== 'undefined') {
+                        Prism.highlightAllUnder(messageText);
+                    }
+                    addCopyButtonsToCodeBlocks();
+                    aiMessage.classList.remove('streaming');
 
-                        // 保存聊天历史
-                        saveChatHistory(userMessage, fullContent);
+                    // 滚动到底部
+                    const chatMessages = document.getElementById('chatMessages');
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
 
-                        return;
+                    // 保存聊天历史
+                    saveChatHistory(userMessage, fullContent);
+
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(data);
+
+                    // 尝试多种可能的内容字段格式
+                    let content = null;
+
+                    // 格式1: OpenAI 风格
+                    if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                        content = parsed.choices[0].delta.content;
+                    }
+                    // 格式2: 直接 content 字段
+                    else if (parsed.content) {
+                        content = parsed.content;
+                    }
+                    // 格式3: response 字段
+                    else if (parsed.response) {
+                        content = parsed.response;
+                    }
+                    // 格式4: text 字段
+                    else if (parsed.text) {
+                        content = parsed.text;
+                    }
+                    // 格式5: choices[0].delta 的任何内容
+                    else if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                        const delta = parsed.choices[0].delta;
+                        content = delta.content || delta.text || delta.message?.content;
                     }
 
-                    try {
-                        const parsed = JSON.parse(data);
-                        const content = parsed.choices?.[0]?.delta?.content;
-                        if (content) {
-                            // 累积完整内容
-                            fullContent += content;
+                    if (content) {
+                        // 累积完整内容
+                        fullContent += content;
 
-                            // 节流更新，避免过度渲染
-                            const now = Date.now();
-                            if (now - lastUpdateTime > UPDATE_INTERVAL) {
-                                updateContent();
-                                lastUpdateTime = now;
-                            }
+                        // 节流更新，避免过度渲染
+                        const now = Date.now();
+                        if (now - lastUpdateTime > UPDATE_INTERVAL) {
+                            updateContent();
+                            lastUpdateTime = now;
                         }
-                    } catch (e) {
-                        // 忽略解析错误
                     }
+                } catch (e) {
+                    // 忽略解析错误，尝试下一行
                 }
             }
         }
@@ -1029,6 +1038,9 @@ async function handleStreamingResponse(response, userMessage) {
             Prism.highlightAllUnder(messageText);
         }
         addCopyButtonsToCodeBlocks();
+    } catch (error) {
+        console.error('流式响应处理错误:', error);
+        messageText.innerHTML = `<p class="text-danger">处理响应时出错: ${error.message}</p>`;
     } finally {
         aiMessage.classList.remove('streaming');
         reader.releaseLock();

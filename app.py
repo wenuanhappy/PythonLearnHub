@@ -4,8 +4,9 @@ Python学习平台 - 主应用
 """
 import os
 import random
+import requests
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, send_from_directory
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, send_from_directory, Response
 from werkzeug.utils import secure_filename
 from functools import wraps
 from utils.safe_executor import executor
@@ -861,9 +862,161 @@ def test_regex():
             result['result'] = compiled_pattern.sub(replacement, test_string)
         
         return jsonify(result)
-        
+
     except Exception as e:
         return jsonify({'error': f'执行错误: {str(e)}'})
+
+# ======================== AI助手代理API ========================
+
+# MiniMax API配置
+MINIMAX_API_URL = 'http://1517457097276560.cn-wulanchabu.pai-eas.aliyuncs.com/api/predict/minimax_27_int8/v1'
+MINIMAX_API_KEY = 'NjZiZGFmYjA0MGQ5NjA3ODZlY2ZkYjBjNjk3NmI3NjlhNzMzYTgwNQ=='
+
+@app.route('/api/ai/chat', methods=['POST'])
+def ai_chat():
+    """AI聊天代理接口 - 解决CORS跨域问题"""
+    try:
+        data = request.get_json()
+        messages = data.get('messages', [])
+
+        if not messages:
+            return jsonify({'error': '消息不能为空'}), 400
+
+        headers = {
+            'Authorization': f'Bearer {MINIMAX_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        # 直接透传前端的消息格式
+        payload = {
+            'messages': messages
+        }
+
+        # 使用流式响应
+        def generate():
+            try:
+                response = requests.post(
+                    MINIMAX_API_URL,
+                    json=payload,
+                    headers=headers,
+                    stream=True,
+                    timeout=60
+                )
+
+                if response.status_code != 200:
+                    # 非200错误，返回错误信息
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('detail', f'API错误: HTTP {response.status_code}')
+                    except:
+                        error_msg = response.text if response.text else f'API错误: HTTP {response.status_code}'
+
+                    # 返回错误消息格式
+                    yield f'data: {{"error": "{error_msg}", "content": "API配置错误，请联系管理员检查API端点设置"}}\n\n'
+                    return
+
+                # 流式返回
+                for line in response.iter_lines():
+                    if line:
+                        decoded = line.decode('utf-8')
+                        # 如果是错误JSON，直接返回
+                        if decoded.startswith('{') and '"detail"' in decoded:
+                            yield f'data: {{"error": "API返回错误", "content": "AI服务暂时不可用"}}\n\n'
+                            return
+                        yield decoded + '\n'
+                    else:
+                        yield 'data: {"content": ""}\n\n'
+
+            except requests.exceptions.Timeout:
+                yield f'data: {{"error": "请求超时", "content": "AI服务响应超时，请稍后重试"}}\n\n'
+            except requests.exceptions.ConnectionError as e:
+                yield f'data: {{"error": "连接失败", "content": "无法连接到AI服务，请检查网络连接"}}\n\n'
+            except requests.exceptions.RequestException as e:
+                yield f'data: {{"error": "网络错误", "content": "网络连接失败: {str(e)[:50]}"}}\n\n'
+
+        return Response(
+            generate(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Access-Control-Allow-Origin': '*'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({'error': f'服务器错误: {str(e)}'}), 500
+
+@app.route('/api/ai/chat/non-stream', methods=['POST'])
+def ai_chat_non_stream():
+    """AI聊天非流式接口"""
+    try:
+        data = request.get_json()
+        messages = data.get('messages', [])
+
+        if not messages:
+            return jsonify({'error': '消息不能为空'}), 400
+
+        headers = {
+            'Authorization': f'Bearer {MINIMAX_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        payload = {
+            'messages': messages
+        }
+
+        response = requests.post(MINIMAX_API_URL, json=payload, headers=headers, timeout=60)
+
+        if response.status_code != 200:
+            try:
+                error_data = response.json()
+                return jsonify({'error': error_data.get('detail', f'API错误: {response.status_code}')}), response.status_code
+            except:
+                return jsonify({'error': f'API错误: HTTP {response.status_code}'}), response.status_code
+
+        return jsonify(response.json())
+
+    except requests.exceptions.Timeout:
+        return jsonify({'error': '请求超时，请稍后重试'}), 504
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': '无法连接到AI服务'}), 503
+    except Exception as e:
+        return jsonify({'error': f'服务器错误: {str(e)}'}), 500
+
+@app.route('/api/ai/health', methods=['GET'])
+def ai_health_check():
+    """AI服务健康检查"""
+    try:
+        # 检查API服务是否可达
+        response = requests.get(
+            'http://1517457097276560.cn-wulanchabu.pai-eas.aliyuncs.com/api/predict/minimax_27_int8',
+            timeout=5
+        )
+        if response.status_code == 200 and 'Ollama' in response.text:
+            return jsonify({
+                'status': 'ok',
+                'service': 'MiniMax EAS',
+                'message': '基础连接正常，但API端点可能需要调整'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'service': 'MiniMax EAS',
+                'message': 'AI服务响应异常'
+            }), 503
+    except requests.exceptions.ConnectionError:
+        return jsonify({
+            'status': 'error',
+            'service': 'MiniMax EAS',
+            'message': '无法连接到AI服务'
+        }), 503
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'service': 'MiniMax EAS',
+            'message': f'检查失败: {str(e)}'
+        }), 503
 
 @app.route('/api/examples/<module_id>')
 def get_module_examples(module_id):
