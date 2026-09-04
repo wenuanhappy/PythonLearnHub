@@ -869,8 +869,8 @@ def test_regex():
 # ======================== AI助手代理API ========================
 
 # MiniMax API配置
-MINIMAX_API_URL = 'http://1517457097276560.cn-wulanchabu.pai-eas.aliyuncs.com/api/predict/minimax_27_int8/v1'
-MINIMAX_API_KEY = 'NjZiZGFmYjA0MGQ5NjA3ODZlY2ZkYjBjNjk3NmI3NjlhNzMzYTgwNQ=='
+MINIMAX_API_URL = '***'
+MINIMAX_API_KEY = '***'
 
 @app.route('/api/ai/chat', methods=['POST'])
 def ai_chat():
